@@ -8,9 +8,9 @@ import {
   type DropResult,
 } from "@hello-pangea/dnd";
 import type { Route } from "./+types/instructor.$courseId";
-import { getCurrentUserId } from "~/lib/session";
+import { requireAccess } from "~/lib/access.server";
 import { markdown } from "~/lib/text";
-import { CourseStatus, UserRole } from "~/db/schema";
+import { CourseStatus } from "~/db/schema";
 import { db } from "~/db";
 import {
   courses,
@@ -62,10 +62,6 @@ import { parseFormData, parseParams } from "~/lib/validation";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
-}
-
-function getCourseById(id: number) {
-  return db.select().from(courses).where(eq(courses.id, id)).get();
 }
 
 function getCourseWithDetails(id: number) {
@@ -193,10 +189,6 @@ function updateCoursePppEnabled(id: number, pppEnabled: boolean) {
     .where(eq(courses.id, id))
     .returning()
     .get();
-}
-
-function getModuleById(id: number) {
-  return db.select().from(modules).where(eq(modules.id, id)).get();
 }
 
 function getModulesByCourse(courseId: number) {
@@ -555,38 +547,16 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export async function loader({ params, request }: Route.LoaderArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to manage courses.", {
-      status: 401,
-    });
-  }
-
-  const user = getUserById(currentUserId);
-
-  if (
-    !user ||
-    (user.role !== UserRole.Instructor && user.role !== UserRole.Admin)
-  ) {
-    throw data("Only instructors and admins can access this page.", {
-      status: 403,
-    });
-  }
-
   const courseId = parseInt(params.courseId, 10);
   if (isNaN(courseId)) {
     throw data("Invalid course ID.", { status: 400 });
   }
 
-  const course = getCourseWithDetails(courseId);
+  await requireAccess(request, { kind: "staff", courseId });
 
+  const course = getCourseWithDetails(courseId);
   if (!course) {
     throw data("Course not found.", { status: 404 });
-  }
-
-  if (course.instructorId !== currentUserId && user.role !== UserRole.Admin) {
-    throw data("You can only edit your own courses.", { status: 403 });
   }
 
   const lessonCount = getLessonCountForCourse(courseId);
@@ -647,32 +617,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 }
 
 export async function action({ params, request }: Route.ActionArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("You must be logged in.", { status: 401 });
-  }
-
-  const user = getUserById(currentUserId);
-  if (
-    !user ||
-    (user.role !== UserRole.Instructor && user.role !== UserRole.Admin)
-  ) {
-    throw data("Only instructors and admins can edit courses.", {
-      status: 403,
-    });
-  }
-
   const { courseId } = parseParams(params, courseEditorParamsSchema);
-
-  const course = getCourseById(courseId);
-  if (!course) {
-    throw data("Course not found.", { status: 404 });
-  }
-
-  if (course.instructorId !== currentUserId && user.role !== UserRole.Admin) {
-    throw data("You can only edit your own courses.", { status: 403 });
-  }
+  const { course } = await requireAccess(request, { kind: "staff", courseId });
 
   const formData = await request.formData();
   const parsed = parseFormData(formData, courseEditorActionSchema);
@@ -730,56 +676,28 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   if (intent === "rename-module") {
     const { moduleId, title } = parsed.data;
-    const mod = getModuleById(moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Module not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, moduleId });
     updateModuleTitle(moduleId, title);
     return { success: true, field: "module" };
   }
 
   if (intent === "delete-module") {
     const { moduleId } = parsed.data;
-    const mod = getModuleById(moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Module not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, moduleId });
     deleteModule(moduleId);
     return { success: true, field: "module" };
   }
 
   if (intent === "add-lesson") {
     const { moduleId, title } = parsed.data;
-    const mod = getModuleById(moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Module not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, moduleId });
     createLesson(moduleId, title, null, null, null, null);
     return { success: true, field: "lesson" };
   }
 
   if (intent === "rename-lesson") {
     const { lessonId, title } = parsed.data;
-    const lesson = getLessonById(lessonId);
-    if (!lesson) {
-      return data({ error: "Lesson not found." }, { status: 404 });
-    }
-    const mod = getModuleById(lesson.moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Lesson not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, lessonId });
     updateLessonTitle(lessonId, title);
     return { success: true, field: "lesson" };
   }
@@ -792,13 +710,7 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   if (intent === "reorder-lessons") {
     const { moduleId, lessonIds: lessonIdsJson } = parsed.data;
-    const mod = getModuleById(moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Module not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, moduleId });
     const lessonIds: number[] = JSON.parse(lessonIdsJson);
     reorderLessons(moduleId, lessonIds);
     return { success: true, field: "lesson-reorder" };
@@ -806,41 +718,19 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   if (intent === "move-lesson") {
     const { lessonId, targetModuleId, targetPosition } = parsed.data;
-    const lesson = getLessonById(lessonId);
-    if (!lesson) {
-      return data({ error: "Lesson not found." }, { status: 404 });
-    }
-    const sourceMod = getModuleById(lesson.moduleId);
-    if (!sourceMod || sourceMod.courseId !== courseId) {
-      return data(
-        { error: "Lesson not found in this course." },
-        { status: 404 }
-      );
-    }
-    const targetMod = getModuleById(targetModuleId);
-    if (!targetMod || targetMod.courseId !== courseId) {
-      return data(
-        { error: "Target module not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, {
+      kind: "staff",
+      courseId,
+      lessonId,
+      moduleId: targetModuleId,
+    });
     moveLessonToModule(lessonId, targetModuleId, targetPosition);
     return { success: true, field: "lesson-move" };
   }
 
   if (intent === "delete-lesson") {
     const { lessonId } = parsed.data;
-    const lesson = getLessonById(lessonId);
-    if (!lesson) {
-      return data({ error: "Lesson not found." }, { status: 404 });
-    }
-    const mod = getModuleById(lesson.moduleId);
-    if (!mod || mod.courseId !== courseId) {
-      return data(
-        { error: "Lesson not found in this course." },
-        { status: 404 }
-      );
-    }
+    await requireAccess(request, { kind: "staff", courseId, lessonId });
     deleteLesson(lessonId);
     return { success: true, field: "lesson" };
   }

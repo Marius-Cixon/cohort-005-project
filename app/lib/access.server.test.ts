@@ -119,6 +119,7 @@ describe("decide", () => {
     ["signed-in", { kind: "signed-in" }],
     ["platform-admin", { kind: "platform-admin" }],
     ["instructor", { kind: "instructor" }],
+    ["instructor-only", { kind: "instructor-only" }],
   ] as const)("the %s Rule", (_, rule) => {
     const expected: Record<string, Record<string, string>> = {
       "signed-in": { student: "ok", otherInstructor: "ok", platformAdmin: "ok" },
@@ -131,6 +132,11 @@ describe("decide", () => {
         student: "forbidden",
         otherInstructor: "ok",
         platformAdmin: "ok",
+      },
+      "instructor-only": {
+        student: "forbidden",
+        otherInstructor: "ok",
+        platformAdmin: "forbidden",
       },
     };
 

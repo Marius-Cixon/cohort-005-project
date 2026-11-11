@@ -34,6 +34,9 @@ export type Viewer = { userId: number | null; country: string | null };
 
 /**
  * What the Viewer must be.
+ * - `instructor`: an Instructor or a Platform Admin, for pages that span
+ *   courses. `instructor-only` leaves Platform Admins out, for pages about
+ *   the courses someone owns or creates.
  * - `staff`: the course's owning Instructor, or a Platform Admin. A given
  *   `moduleId` and `lessonId` must each belong to the course (independently:
  *   the lesson need not be in that module).
@@ -44,6 +47,7 @@ export type Rule =
   | { kind: "signed-in" }
   | { kind: "platform-admin" }
   | { kind: "instructor" }
+  | { kind: "instructor-only" }
   | { kind: "staff"; courseId: number; moduleId?: number; lessonId?: number }
   | { kind: "content"; courseId: number; lessonId?: number };
 
@@ -136,6 +140,11 @@ function decideAny(db: Db, viewer: Viewer, rule: Rule) {
     case "instructor":
       return isPlatformAdmin || user.role === UserRole.Instructor
         ? { ok: true as const, user, isPlatformAdmin }
+        : forbidden(rule);
+
+    case "instructor-only":
+      return user.role === UserRole.Instructor
+        ? { ok: true as const, user }
         : forbidden(rule);
 
     case "staff": {
@@ -311,6 +320,7 @@ const FORBIDDEN_MESSAGES: Record<Rule["kind"], string> = {
   "signed-in": "Select a user from the DevUI panel.",
   "platform-admin": "Only Platform Admins can do that.",
   instructor: "Only instructors can access this page.",
+  "instructor-only": "Only instructors can access this page.",
   staff: "Only this course's instructor can do that.",
   content: "You must be enrolled in this course.",
 };

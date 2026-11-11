@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/saved";
 import { db } from "~/db";
-import { requireUserId } from "~/lib/access.server";
+import { requireAccess } from "~/lib/access.server";
 import { listBookmarks } from "~/lib/bookmarks.server";
 import { listNotes } from "~/lib/notes.server";
 import { Card, CardContent } from "~/components/ui/card";
@@ -16,7 +16,9 @@ export function meta() {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const userId = await requireUserId(request);
+  const {
+    user: { id: userId },
+  } = await requireAccess(request, { kind: "signed-in" });
 
   return {
     savedBookmarks: listBookmarks(db, userId),

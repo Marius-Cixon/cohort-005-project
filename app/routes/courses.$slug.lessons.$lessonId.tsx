@@ -3,7 +3,12 @@ import { Link, useFetcher, useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/courses.$slug.lessons.$lessonId";
 import { getCurrentUserId } from "~/lib/session";
-import { getAccess, requireContentAccess } from "~/lib/access.server";
+import {
+  decide,
+  denialResponse,
+  requireAccess,
+  viewerFrom,
+} from "~/lib/access.server";
 import { renderComment } from "~/lib/comment-markdown.server";
 import { markdown, type Markdown } from "~/lib/text";
 import {
@@ -191,18 +196,6 @@ function getLessonById(id: number) {
 
 function getModuleById(id: number) {
   return db.select().from(modules).where(eq(modules.id, id)).get();
-}
-
-/**
- * Throws 404 unless the lesson is in the course, so content access to one
- * course can't reach a lesson in another by posting its id to this route.
- */
-function requireLessonInCourse(lessonId: number, courseId: number) {
-  const lesson = getLessonById(lessonId);
-  const mod = lesson ? getModuleById(lesson.moduleId) : undefined;
-  if (!mod || mod.courseId !== courseId) {
-    throw data("Lesson not found in this course", { status: 404 });
-  }
 }
 
 function getUserById(id: number) {
@@ -664,13 +657,20 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw data("Module not found", { status: 404 });
   }
 
-  // Verify lesson belongs to this course
-  if (mod.courseId !== course.id) {
-    throw data("Lesson not found in this course", { status: 404 });
+  // A lesson from another course is a 404 even for a signed-out visitor; any
+  // other denial still renders the page, as a paywall preview.
+  const viewer = await viewerFrom(request);
+  const verdict = decide(db, viewer, {
+    kind: "content",
+    courseId: course.id,
+    lessonId,
+  });
+  if (!verdict.ok && verdict.reason === "not-found") {
+    throw denialResponse(verdict);
   }
-
-  const access = await getAccess(request, course.id);
-  const currentUserId = access.userId;
+  const access = verdict.access;
+  const currentUserId =
+    verdict.ok || verdict.reason === "forbidden" ? viewer.userId : null;
   const enrolled = access.enrolled;
   let lessonStatus: string | null = null;
   let lastWatchPosition = 0;
@@ -708,7 +708,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     }
   }
 
-  // PPP Access Guard — resolved by getAccess, which treats a blocked user as
+  // PPP Access Guard — resolved by decide, which treats a blocked user as
   // having no access to the course's content at all.
   const { pppBlocked, pppBlockedCountry, pppPurchaseCountry, canViewContent } =
     access;
@@ -853,7 +853,11 @@ export async function action({ params, request }: Route.ActionArgs) {
     intent === "edit-comment" ||
     intent === "delete-comment"
   ) {
-    const access = await requireContentAccess(request, course.id);
+    const { access } = await requireAccess(request, {
+      kind: "content",
+      courseId: course.id,
+      lessonId,
+    });
 
     try {
       if (intent === "create-comment") {
@@ -927,8 +931,11 @@ export async function action({ params, request }: Route.ActionArgs) {
   // Bookmark and Note intents re-check access here, like the comment intents
   // above — loader guards don't protect actions.
   if (intent === "toggle-bookmark" || intent === "save-note") {
-    await requireContentAccess(request, course.id);
-    requireLessonInCourse(lessonId, course.id);
+    await requireAccess(request, {
+      kind: "content",
+      courseId: course.id,
+      lessonId,
+    });
 
     if (intent === "toggle-bookmark") {
       const bookmarked = toggleBookmark(db, currentUserId, lessonId, new Date());

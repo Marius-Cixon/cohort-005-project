@@ -957,6 +957,16 @@ export async function action({ params, request }: Route.ActionArgs) {
     return { ok: true };
   }
 
+  // Progress and quiz intents need the same content access as the lesson
+  // itself: a quiz result carries every question's correct option.
+  if (intent === "mark-complete" || intent === "submit-quiz") {
+    await requireAccess(request, {
+      kind: "content",
+      courseId: course.id,
+      lessonId,
+    });
+  }
+
   if (intent === "mark-complete") {
     markLessonComplete(currentUserId, lessonId);
     return { success: true };
@@ -966,6 +976,9 @@ export async function action({ params, request }: Route.ActionArgs) {
     const quizId = Number(formData.get("quizId"));
     if (isNaN(quizId)) {
       throw data("Invalid quiz ID", { status: 400 });
+    }
+    if (getQuizByLessonId(lessonId)?.id !== quizId) {
+      throw data("Quiz not found", { status: 404 });
     }
 
     // Collect answers: form fields named "question-{questionId}" with value = optionId

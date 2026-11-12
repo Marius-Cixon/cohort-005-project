@@ -15,13 +15,11 @@ import {
 } from "lucide-react";
 import { formatDuration } from "~/lib/utils";
 import { YouTubePlayer } from "~/components/youtube-player";
-import { LessonNote } from "~/components/lesson-note";
+import { LessonNote } from "./lesson-note";
 import type { LessonPageData } from "~/modules/lesson-page";
 import { CurriculumSidebar } from "./curriculum-sidebar";
 import { LessonBreadcrumb } from "./lesson-breadcrumb";
 import { QuizSection } from "./quiz-section";
-
-type LessonLoaderData = LessonPageData;
 
 const AUTOPLAY_KEY = "cadence-autoplay";
 
@@ -54,7 +52,7 @@ function useAutoplay() {
 export function FullLesson({
   data,
 }: {
-  data: Extract<LessonLoaderData, { view: "full" }>;
+  data: Extract<LessonPageData, { view: "full" }>;
 }) {
   const {
     course,

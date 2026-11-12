@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
+import { plainText } from "~/lib/text";
 import { LessonNote, type LessonNoteData } from "./lesson-note";
 
 function render(note: LessonNoteData) {
@@ -30,8 +31,8 @@ describe("LessonNote", () => {
 
   it("shows the saved note and when it was last edited", () => {
     const html = render({
-      body: "Types are erased at compile time",
-      updatedAt: new Date().toISOString(),
+      body: plainText("Types are erased at compile time"),
+      updatedAt: "2026-01-01T00:00:00.000Z",
     });
 
     expect(html).toContain("Types are erased at compile time");

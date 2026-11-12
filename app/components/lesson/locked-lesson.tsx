@@ -7,12 +7,10 @@ import type { LessonPageData } from "~/modules/lesson-page";
 import { CurriculumSidebar } from "./curriculum-sidebar";
 import { LessonBreadcrumb } from "./lesson-breadcrumb";
 
-type LessonLoaderData = LessonPageData;
-
 export function LockedLesson({
   data: { course, curriculum, module: mod, lesson, enrolled, lockedReason },
 }: {
-  data: Extract<LessonLoaderData, { view: "locked" }>;
+  data: Extract<LessonPageData, { view: "locked" }>;
 }) {
   const purchasePath = `/courses/${course.slug}/purchase`;
 

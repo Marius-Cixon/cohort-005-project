@@ -15,7 +15,7 @@ Read CODING_STANDARDS.md.
 - The review workflow checks you against the ticket's "Done when". Reread it
   before you stop.
 - Your checks are `npm run check` and `npm run build`. Mutation testing
-  belongs to the reviewer, who runs it on the modules your diff touches.
+  belongs to the reviewer, who runs it on the lines your diff writes.
 - Commit with `git commit` on the current branch. When the pre-commit hook
   rejects a commit, fix the work and commit again. The hook stays as it is:
   no `--no-verify`, no edits to `.husky/`, `scripts/pre-commit.sh` or

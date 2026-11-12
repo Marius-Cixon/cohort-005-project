@@ -183,6 +183,11 @@ jobs:
           cat /tmp/ticket.md
 
       - name: Build the ticket
+        id: build
+        # An agent that stops early (idle timeout, crash) may already have
+        # committed finished work. The steps below still push it and open the
+        # draft PR; "Fail if the agent stopped early" turns the run red after.
+        continue-on-error: true
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: npx tsx .sandcastle/agent-workflows/implement/implement.ts
@@ -193,6 +198,7 @@ jobs:
         # goes red rather than green-and-empty.
         env:
           BASE: ${{ steps.branch.outputs.base }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
           set -euo pipefail
           commits=$(git rev-list --count "$BASE..HEAD")
@@ -202,9 +208,15 @@ jobs:
             exit 1
           fi
           if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::The agent left uncommitted changes. The PR would not contain them."
-            git status --short
-            exit 1
+            if [ "$BUILD_OUTCOME" = "failure" ]; then
+              # Work in progress when the agent stopped. It never passed the
+              # pre-commit hook, so only the commits go out.
+              echo "::warning::The agent stopped with uncommitted changes. Pushing its commits only."
+            else
+              echo "::error::The agent left uncommitted changes. The PR would not contain them."
+              git status --short
+              exit 1
+            fi
           fi
           git log --oneline "$BASE..HEAD"
 
@@ -231,6 +243,7 @@ jobs:
           # /tmp/evidence path in the body for its URL. It needs a PAT too:
           # GITHUB_TOKEN is rejected.
           GH_TOKEN: ${{ secrets.FACTORY_PAT }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
           set -euo pipefail
           title="$(gh issue view "$ISSUE_NUMBER" --json title --jq .title)"
@@ -240,6 +253,11 @@ jobs:
             echo ""
             echo "---"
             echo ""
+            if [ "$BUILD_OUTCOME" = "failure" ]; then
+              echo "> [!WARNING]"
+              echo "> The agent stopped before it finished ([logs](${RUN_URL})). These are the commits it had made by then."
+              echo ""
+            fi
             echo "Closes #${ISSUE_NUMBER}. Built unattended by [this run](${RUN_URL})."
             echo "Nobody has read this yet. That is what the draft state is for."
           } >> "$body_file"
@@ -257,6 +275,12 @@ jobs:
             --body-file "$body_file" \
             "${attach[@]}")"
           echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Fail if the agent stopped early
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error::The agent stopped before it finished. Any commits it made are in the draft PR."
+          exit 1
 
       - name: Mark blocked on failure
         if: failure()

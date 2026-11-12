@@ -10,7 +10,8 @@ Read CODING_STANDARDS.md.
   test can call, never inline in a loader.
 - Ship tests with the code. End with more passing tests than you started
   with, and none failing.
-- `npm run build` must pass too.
+- Your checks are `npm run check` and `npm run build`. Mutation testing
+  belongs to the reviewer, who runs it on the modules your diff touches.
 - Commit with `git commit` on the current branch. When the pre-commit hook
   rejects a commit, fix the work and commit again. The hook stays as it is:
   no `--no-verify`, no edits to `.husky/`, `scripts/pre-commit.sh` or

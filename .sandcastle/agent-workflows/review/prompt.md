@@ -11,10 +11,11 @@ Leave the human reviewer as little as possible. Fix every finding you can on
 `{{BRANCH}}`, and commit each fix through the pre-commit hook. The workflow
 pushes your commits. Leave `.github/` untouched.
 
-Mutation-test the behaviour: for each `app/modules/<name>/` directory the
-diff changes, run `npm run test:mutation -- app/modules/<name>`. Moved
-components and routes stay out of the run. Each surviving mutant is a
-finding; .agents/skills/mutation-testing/SKILL.md locates it in the source.
+Mutation-test the diff once: `npm run test:mutation -- --base origin/{{BASE_REF}}`.
+It grades only the lines this pull request wrote; moved code stays out. Each
+surviving mutant is a finding, located in the source by
+.agents/skills/mutation-testing/SKILL.md: kill it with a test, or leave it.
+One more run after your fixes confirms them, and is the last.
 
 Every finding you leave unfixed becomes an inline comment on its file and
 line. You will be asked for them as structured output.

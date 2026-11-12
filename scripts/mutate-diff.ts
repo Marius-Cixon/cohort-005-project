@@ -11,7 +11,16 @@
  *   reset to with `npm run reset <slug>`, not `main`. See `findDiffBase`
  *   below.
  * - It is staged or unstaged in the work tree now.
- * - It is in an untracked file. A new file is yours, so every line counts.
+ * - It is in an untracked file.
+ *
+ * A moved line is not touched. Code you cut from one place and paste into
+ * another, even into a new file, is graded where it came from, not again
+ * here. Moved and then edited, it counts. See `changedTargets` below.
+ *
+ * Name the base yourself when the reflog does not hold it, as on a branch
+ * checked out at a pull request's head:
+ *
+ *     npm run test:mutation -- --base origin/main
  *
  * You can also name the files or directories yourself. That skips the diff
  * and grades every line of them:
@@ -23,7 +32,15 @@
  * result.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, statSync, readdirSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 /**
@@ -63,12 +80,19 @@ const TESTED_ROOTS = ["app/lib/", "app/modules/", "request-logger/"];
  * A diff against `main` can run past the 1 MB that `execFileSync` holds by
  * default, so the buffer is far larger than that.
  */
-function git(args: string[], { optional = false } = {}): string[] {
+function git(
+  args: string[],
+  {
+    optional = false,
+    env,
+  }: { optional?: boolean; env?: NodeJS.ProcessEnv } = {}
+): string[] {
   try {
     return execFileSync("git", args, {
       cwd: repoRoot,
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
+      env: env ? { ...process.env, ...env } : undefined,
     })
       .split("\n")
       .map((line) => line.trim())
@@ -174,45 +198,146 @@ function namedFiles(args: string[]): string[] {
 type Target = { file: string; lines: string[] | null };
 
 /**
- * The lines your diff added or changed, file by file.
+ * The colours `changedTargets` pins on the diff, so it can tell a written
+ * line from a moved one by its first bytes.
+ */
+const WRITTEN = "\u001b[32m+"; // color.diff.new: green
+const MOVED = "\u001b[34m+"; // color.diff.newMoved: blue
+// oxlint-disable-next-line no-control-regex -- matching git's colour codes is the point
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/**
+ * Runs `git diff` with every untracked file in it as a new file.
+ *
+ * `git add --intent-to-add` makes `git diff` show an untracked file, so code
+ * moved into it is matched with the lines it left behind. It goes into a copy
+ * of the index, which is thrown away after: your real index stays as it was.
+ */
+function diffWithUntracked(args: string[]): string[] {
+  const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+  if (untracked.length === 0) return git(args);
+  const dir = mkdtempSync(join(tmpdir(), "mutate-diff-"));
+  try {
+    const index = join(dir, "index");
+    const [realIndex] = git(["rev-parse", "--git-path", "index"]);
+    if (realIndex && existsSync(resolve(repoRoot, realIndex))) {
+      copyFileSync(resolve(repoRoot, realIndex), index);
+    }
+    const env = { GIT_INDEX_FILE: index };
+    git(["add", "--intent-to-add", "--", ...untracked], { env });
+    return git(args, { env });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The lines your diff wrote, file by file. Moved lines are left out.
  *
  * `git diff -U0 <base>` compares the base with the work tree, so one diff
- * holds the committed, the staged and the unstaged changes. Each hunk header
- * (`@@ -a,b +start,count @@`) gives the new lines. A hunk with a count of 0
- * only deletes lines, so it leaves nothing to mutate.
+ * holds the committed, the staged, the unstaged and the untracked changes.
+ * Each hunk header (`@@ -a,b +start,count @@`) gives where its added lines
+ * start.
+ *
+ * `--color-moved` is git's own move detection: a block of added lines that
+ * the diff also deletes elsewhere, indentation aside, is moved. Git marks it
+ * in the colour alone, so the colours are pinned here and each added line is
+ * sorted by its first bytes. Git counts a block as moved from 20 letters and
+ * digits up, so a short line on its own, a lone `}`, still counts as written.
  */
-function changedTargets(): Target[] {
-  const base = findDiffBase();
+function changedTargets(base: string | null): Target[] {
   console.log(`Diffing against ${base ? base.slice(0, 7) : "nothing"}.\n`);
-  const lines = new Map<string, string[]>();
+  const written = new Map<string, number[]>();
   let file: string | null = null;
-  for (const line of git(["diff", "-U0", "--no-color", base ?? "HEAD"])) {
+  let next = 0;
+  let remaining = 0;
+  let moved = 0;
+  const diff = diffWithUntracked([
+    "-c",
+    "color.diff.new=green",
+    "-c",
+    "color.diff.newMoved=blue",
+    "-c",
+    "color.diff.newMovedAlternative=blue",
+    "diff",
+    "-U0",
+    "--color=always",
+    "--color-moved=blocks",
+    "--color-moved-ws=allow-indentation-change",
+    base ?? "HEAD",
+  ]);
+  for (const raw of diff) {
+    const line = raw.replace(ANSI, "");
+    // Inside a hunk, a line starting with "+" is content, even "+++".
+    if (remaining > 0) {
+      if (!line.startsWith("+")) continue;
+      if (raw.startsWith(MOVED)) moved++;
+      else if (file && raw.startsWith(WRITTEN)) {
+        written.set(file, [...(written.get(file) ?? []), next]);
+      }
+      next++;
+      remaining--;
+      continue;
+    }
     if (line.startsWith("+++ ")) {
       file = line === "+++ /dev/null" ? null : line.slice("+++ b/".length);
       continue;
     }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (!hunk || !file) continue;
-    const start = Number(hunk[1]);
-    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-    if (count === 0) continue;
-    lines.set(file, [
-      ...(lines.get(file) ?? []),
-      `${start}-${start + count - 1}`,
-    ]);
+    if (!hunk) continue;
+    next = Number(hunk[1]);
+    remaining = hunk[2] === undefined ? 1 : Number(hunk[2]);
+  }
+  if (moved > 0) {
+    console.log(`Skipping ${moved} moved line(s): they are not new code.\n`);
   }
 
-  const untracked = git(["ls-files", "--others", "--exclude-standard"]);
-  return [
-    ...[...lines].map(([file, ranges]) => ({ file, lines: ranges })),
-    ...untracked.map((file) => ({ file, lines: null })),
-  ].filter(({ file }) => existsSync(resolve(repoRoot, file))); // drop deletions
+  return [...written]
+    .map(([file, numbers]) => ({ file, lines: toRanges(numbers) }))
+    .filter(({ file }) => existsSync(resolve(repoRoot, file))); // drop deletions
 }
 
-const args = process.argv.slice(2);
+/** Line numbers in ascending order, as Stryker's ranges: [3, 4, 5, 9] → ["3-5", "9-9"]. */
+function toRanges(numbers: number[]): string[] {
+  const ranges: Array<[number, number]> = [];
+  for (const n of numbers) {
+    const last = ranges.at(-1);
+    if (last && n === last[1] + 1) last[1] = n;
+    else ranges.push([n, n]);
+  }
+  return ranges.map(([start, end]) => `${start}-${end}`);
+}
+
+/** The base `--base <ref>` names: where HEAD branched off that ref. */
+function mergeBaseWith(ref: string): string {
+  const [sha] = git(["merge-base", "HEAD", ref]);
+  if (!sha) {
+    console.error(`No merge base between HEAD and ${ref}.`);
+    process.exit(1);
+  }
+  return sha;
+}
+
+const argv = process.argv.slice(2);
+const baseFlag = argv.indexOf("--base");
+const baseArg = baseFlag === -1 ? undefined : argv[baseFlag + 1];
+if (baseFlag !== -1 && !baseArg) {
+  console.error("--base needs a ref, e.g. --base origin/main");
+  process.exit(1);
+}
+const args =
+  baseFlag === -1
+    ? argv
+    : argv.filter((_, i) => i !== baseFlag && i !== baseFlag + 1);
+if (baseArg && args.length > 0) {
+  console.error(
+    "--base picks the base of the diff; named files skip the diff. Pass one or the other."
+  );
+  process.exit(1);
+}
 const fromDiff = args.length === 0;
 const candidates: Target[] = fromDiff
-  ? changedTargets()
+  ? changedTargets(baseArg ? mergeBaseWith(baseArg) : findDiffBase())
   : namedFiles(args).map((file) => ({ file, lines: null }));
 
 const targets = candidates

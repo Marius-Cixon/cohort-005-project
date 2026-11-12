@@ -243,7 +243,7 @@ export function calculateWatchProgress(
   return Math.min(Math.round((maxPosition / videoDurationSeconds) * 100), 100);
 }
 
-export function getCourseForLesson(lessonId: number) {
+function getCourseForLesson(lessonId: number) {
   return db
     .select({
       courseId: courses.id,
@@ -362,7 +362,7 @@ export function getBestAttempt(userId: number, quizId: number) {
     .get();
 }
 
-export function calculateGrade(score: number): string {
+function calculateGrade(score: number): string {
   if (score >= 0.9) return "A";
   if (score >= 0.8) return "B";
   if (score >= 0.7) return "C";

@@ -21,7 +21,7 @@ name: Agent — Review A Pull Request
 #   the same shortcut. A reviewer that has never seen the argument cannot be.
 #   If you find yourself wanting to pass context from the build run into this
 #   one — that is the instinct to resist.
-#
+#/as
 #   The agent itself is a Sandcastle script:
 #   .sandcastle/agent-workflows/review/review.ts, with its prompt next to it
 #   in prompt.md. The prompt hands it the repo's own code-review skill.
